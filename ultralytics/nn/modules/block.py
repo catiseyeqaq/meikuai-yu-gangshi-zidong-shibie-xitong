@@ -42,8 +42,8 @@ __all__ = (
     "CBFuse",
     "CBLinear",
     "ContrastiveHead",
-    "GhostBottleneck",
     "FasterBottleneck",
+    "GhostBottleneck",
     "HGBlock",
     "HGStem",
     "ImagePoolingAttn",
@@ -324,7 +324,9 @@ class C2f(nn.Module):
 class C2fFaster(C2f):
     """C2f block with FasterNet-style partial-convolution bottlenecks."""
 
-    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5, n_div: int = 4):
+    def __init__(
+        self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5, n_div: int = 4
+    ):
         """Initialize C2fFaster with the same interface as C2f plus PConv split ratio."""
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(FasterBottleneck(self.c, self.c, shortcut, g, e=1.0, n_div=n_div) for _ in range(n))

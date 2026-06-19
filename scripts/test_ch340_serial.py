@@ -19,14 +19,14 @@ def main() -> None:
     payload = {"cmd": args.cmd, "action": args.action}
     line = json.dumps(payload, ensure_ascii=False) + "\n"
 
-    with serial.Serial(args.port, args.baudrate, timeout=args.timeout) as ser:
-        print(f"opened {ser.name} @ {ser.baudrate}")
-        ser.reset_input_buffer()
-        ser.write(line.encode("utf-8"))
-        ser.flush()
+    with serial.Serial(args.port, args.baudrate, timeout=args.timeout) as set:
+        print(f"opened {set.name} @ {set.baudrate}")
+        set.reset_input_buffer()
+        set.write(line.encode("utf-8"))
+        set.flush()
         print(f"sent {line.strip()}")
         time.sleep(0.3)
-        data = ser.read_all()
+        data = set.read_all()
         if data:
             print("recv", data.decode("utf-8", errors="replace").strip())
         else:

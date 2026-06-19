@@ -2,7 +2,7 @@ train: train/images
 val: valid/images
 
 nc: 2
-names: ['coal', 'gangue']
+names: ["coal", "gangue"]
 
 roboflow:
   workspace: cat-bht1u
