@@ -4,12 +4,11 @@ import shutil
 from pathlib import Path
 
 from docx import Document
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PAPER = ROOT / "YOLO-GDL_煤矸石识别论文实验章节_.docx"
@@ -62,7 +61,11 @@ if __name__ == "__main__":
 
 
 PARAM_ROWS = [
-    ("模型配置", "ultralytics/cfg/models/v8/yolov8n-ghostneck-dwdown.yaml", "YOLO-GDL 最终结构，Neck 采用 C3Ghost，Neck 下采样采用 DWConv"),
+    (
+        "模型配置",
+        "ultralytics/cfg/models/v8/yolov8n-ghostneck-dwdown.yaml",
+        "YOLO-GDL 最终结构，Neck 采用 C3Ghost，Neck 下采样采用 DWConv",
+    ),
     ("数据集配置", "煤块和石块/data.yaml", "训练集 train/images，验证集 valid/images，类别为 coal 和 gangue"),
     ("训练轮次 epochs", "100", "保证小样本煤矸石数据充分收敛"),
     ("输入尺寸 imgsz", "1280", "保留履带图像中煤块、矸石目标的细节纹理"),
@@ -123,11 +126,7 @@ def main() -> None:
         print("training section already exists")
         return
 
-    anchor = next(
-        p
-        for p in doc.paragraphs
-        if "为验证各改进模块的有效性" in p.text
-    )
+    anchor = next(p for p in doc.paragraphs if "为验证各改进模块的有效性" in p.text)
 
     elements = []
 

@@ -1,5 +1,5 @@
 """
-煤矿履带煤炭与矿石智能识别监测系统 - Gradio Web 交互界面
+煤矿履带煤炭与矿石智能识别监测系统 - Gradio Web 交互界面.
 ======================================================
 基于 YOLO-GDL 目标检测模型（coal + gangue），实现完整的
 "采集 → 识别 → 记录"演示流水线：
@@ -57,6 +57,7 @@ plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 
 import torch
+
 from ultralytics import YOLO
 
 # ============================================================================
@@ -85,12 +86,12 @@ except ImportError:
 
 
 class SerialController:
-    """串口通信控制器 —— 上位机 → 下位机 JSON 指令收发。
+    """串口通信控制器 —— 上位机 → 下位机 JSON 指令收发。.
 
     技术手册规定：
-      - 物理连接: USB 转 TTL (UART)
-      - 波特率: 115200
-      - 数据格式: JSON 字符串
+    - 物理连接: USB 转 TTL (UART)
+    - 波特率: 115200
+    - 数据格式: JSON 字符串
 
     未连接硬件时自动使用模拟模式（仅打印日志）。
     """
@@ -102,11 +103,11 @@ class SerialController:
         self.port = ""
 
     def connect(self, port: str = "COM3", baudrate: int = 115200) -> str:
-        """连接串口。"""
+        """连接串口。."""
         if not SERIAL_AVAILABLE:
             self.connected = False
             self.port = port
-            return f"[模拟模式] pyserial 未安装，串口指令将以日志形式输出"
+            return "[模拟模式] pyserial 未安装，串口指令将以日志形式输出"
         try:
             with self._lock:
                 if self._ser and self._ser.is_open:
@@ -120,7 +121,7 @@ class SerialController:
             return f"串口连接失败: {e}"
 
     def disconnect(self) -> str:
-        """断开串口。"""
+        """断开串口。."""
         with self._lock:
             if self._ser and self._ser.is_open:
                 self._ser.close()
@@ -129,7 +130,7 @@ class SerialController:
         return "串口已断开"
 
     def send_cmd(self, cmd_dict: dict) -> str:
-        """发送 JSON 指令到下位机。"""
+        """发送 JSON 指令到下位机。."""
         json_str = _json.dumps(cmd_dict, ensure_ascii=False)
         with self._lock:
             if self._ser and self._ser.is_open:
@@ -149,30 +150,30 @@ class SerialController:
         return self.connect(port, baudrate)
 
     def send_belt(self, action: str) -> str:
-        """发送履带控制指令 (start/stop)。"""
+        """发送履带控制指令 (start/stop)。."""
         return self.send_cmd({"cmd": "belt", "action": action})
 
     def send_light(self, action: str) -> str:
-        """发送照明灯控制指令 (on/off)。"""
+        """发送照明灯控制指令 (on/off)。."""
         return self.send_cmd({"cmd": "light", "action": action})
 
 
 class VoiceAlert:
-    """异步语音播报引擎 - 队列驱动 + 常驻线程。
+    """异步语音播报引擎 - 队列驱动 + 常驻线程。.
 
-    每次播报创建新 pyttsx3 engine 实例，播完即销毁，
-    彻底避免 pyttsx3 多线程 runAndWait() 死锁问题。
+    每次播报创建新 pyttsx3 engine 实例，播完即销毁， 彻底避免 pyttsx3 多线程 runAndWait() 死锁问题。
     """
 
     def __init__(self) -> None:
         self.tts_available = TTS_AVAILABLE
         import queue
+
         self._queue: queue.Queue[str] = queue.Queue(maxsize=2)
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
     def _run(self) -> None:
-        """常驻线程：从队列取消息，新建 engine 播报后销毁。"""
+        """常驻线程：从队列取消息，新建 engine 播报后销毁。."""
         while True:
             text = self._queue.get()
             if not self.tts_available:
@@ -196,7 +197,7 @@ class VoiceAlert:
                 print(f"[语音错误] {e}")
 
     def speak(self, text: str) -> None:
-        """提交播报请求到队列（非阻塞）。队列满时丢弃，避免堆积。"""
+        """提交播报请求到队列（非阻塞）。队列满时丢弃，避免堆积。."""
         try:
             self._queue.put_nowait(text)
         except Exception:
@@ -207,7 +208,7 @@ class VoiceAlert:
 # 检测引擎
 # ============================================================================
 class CoalGangueDetector:
-    """YOLOv8 煤矸石检测引擎，封装模型加载与推理。
+    """YOLOv8 煤矸石检测引擎，封装模型加载与推理。.
 
     Attributes:
         model (YOLO): 已加载的 YOLO 模型实例。
@@ -221,12 +222,12 @@ class CoalGangueDetector:
         _log.info(f"推理设备: {self.device} | 图像尺寸: {imgsz}")
         self.model = YOLO(model_path)
         self.model.to(self.device)
-        
+
         # ── 动态读取模型类别映射 ──
         self.class_names = self.model.names  # {0: 'coal', 1: 'gangue'} 或反过来
         print(f"[INFO] 模型类别: {self.class_names}")
         _log.info(f"模型类别: {self.class_names}")
-        
+
         # 预热推理：使用训练分辨率消除首帧 GPU kernel 编译延迟
         _warmup_img = np.random.randint(0, 255, (imgsz, imgsz, 3), dtype=np.uint8)
         self.model(_warmup_img, conf=0.5, verbose=False, device=self.device, imgsz=imgsz)
@@ -234,19 +235,18 @@ class CoalGangueDetector:
         _log.info(f"模型预热完成（{imgsz}x{imgsz}）")
 
     def _normalize_class(self, cls_id: int) -> tuple[str, str]:
-        """将模型原始类别统一映射为系统展示用的煤块/矿石。"""
+        """将模型原始类别统一映射为系统展示用的煤块/矿石。."""
         raw_name = str(self.class_names.get(cls_id, f"class_{cls_id}")).lower()
         if "coal" in raw_name or "煤" in raw_name:
             return "coal", "煤块"
         return "gangue", "矿石"
 
     def _parse_boxes(self, boxes, frame_area: int = 0) -> tuple[dict[str, int], list[dict], bool, float]:
-        """解析 YOLO 检测框，生成统计、详情和矿石最高置信度。
+        """解析 YOLO 检测框，生成统计、详情和矿石最高置信度。.
 
         Args:
             boxes: YOLO 检测框结果。
-            frame_area: 原始帧总像素面积（宽×高），用于过滤过小检测框。
-                        为 0 时不启用面积过滤（兼容图片检测）。
+            frame_area: 原始帧总像素面积（宽×高），用于过滤过小检测框。 为 0 时不启用面积过滤（兼容图片检测）。
         """
         stats: dict[str, int] = {"coal": 0, "gangue": 0}
         detections: list[dict] = []
@@ -286,7 +286,7 @@ class CoalGangueDetector:
     def predict_image(
         self, image: np.ndarray, conf: float = 0.5, iou: float = 0.45
     ) -> tuple[np.ndarray, dict, list[dict]]:
-        """对单张图片执行检测。
+        """对单张图片执行检测。.
 
         Args:
             image: BGR 通道的 numpy 图像数组。
@@ -295,9 +295,9 @@ class CoalGangueDetector:
 
         Returns:
             (annotated, stats, detections):
-                annotated: 标注后的图像。
-                stats: {"coal": N, "gangue": M} 类别计数。
-                detections: 每个检测框的详细信息列表。
+            annotated: 标注后的图像。
+            stats: {"coal": N, "gangue": M} 类别计数。
+            detections: 每个检测框的详细信息列表。
         """
         with self._infer_lock:
             results = self.model(image, conf=conf, iou=iou, verbose=False, device=self.device, imgsz=self.imgsz)
@@ -309,7 +309,7 @@ class CoalGangueDetector:
     def predict_frame(
         self, frame: np.ndarray, conf: float = 0.5, iou: float = 0.45
     ) -> tuple[np.ndarray, dict, bool, float]:
-        """对单帧执行检测（视频/摄像头流用）。
+        """对单帧执行检测（视频/摄像头流用）。.
 
         Args:
             frame: BGR 通道的 numpy 帧数组。
@@ -317,8 +317,7 @@ class CoalGangueDetector:
             iou: IoU 阈值。
 
         Returns:
-            (annotated, stats, has_gangue, max_gangue_conf):
-                标注帧、类别统计、是否有矿石、矿石最高置信度。
+            (annotated, stats, has_gangue, max_gangue_conf): 标注帧、类别统计、是否有矿石、矿石最高置信度。
         """
         with self._infer_lock:
             results = self.model(frame, conf=conf, iou=iou, verbose=False, device=self.device, imgsz=self.imgsz)
@@ -330,7 +329,7 @@ class CoalGangueDetector:
     def try_predict_frame(
         self, frame: np.ndarray, conf: float = 0.5, iou: float = 0.45
     ) -> tuple[np.ndarray, dict, bool, float] | None:
-        """非阻塞帧推理：推理锁被占用时立即返回 None，避免摄像头线程阻塞等待。
+        """非阻塞帧推理：推理锁被占用时立即返回 None，避免摄像头线程阻塞等待。.
 
         用于实时摄像头场景 —— 当图片/视频检测正在占用 GPU 时，
         摄像头线程不必等待，直接跳过本帧推理并显示缓存画面。
@@ -340,8 +339,12 @@ class CoalGangueDetector:
             return None
         try:
             results = self.model(
-                frame, conf=conf, iou=iou, verbose=False,
-                device=self.device, imgsz=self.imgsz,
+                frame,
+                conf=conf,
+                iou=iou,
+                verbose=False,
+                device=self.device,
+                imgsz=self.imgsz,
             )
         finally:
             self._infer_lock.release()
@@ -355,7 +358,7 @@ class CoalGangueDetector:
 # 统计可视化
 # ============================================================================
 def _fig_to_numpy(fig: plt.Figure) -> np.ndarray:
-    """将 matplotlib figure 转换为 numpy 数组（RGB）。"""
+    """将 matplotlib figure 转换为 numpy 数组（RGB）。."""
     fig.canvas.draw()
     buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
     w, h = fig.canvas.get_width_height()
@@ -364,7 +367,7 @@ def _fig_to_numpy(fig: plt.Figure) -> np.ndarray:
 
 
 def create_pie_chart(stats: dict[str, int]) -> np.ndarray:
-    """生成煤块/矿石占比饼图。
+    """生成煤块/矿石占比饼图。.
 
     Args:
         stats: {"coal": N, "gangue": M}。
@@ -381,7 +384,7 @@ def create_pie_chart(stats: dict[str, int]) -> np.ndarray:
         values = [1, 1]
     explode = (0, 0.06) if values[1] > 0 else (0, 0)
 
-    wedges, texts, autotexts = ax.pie(
+    _wedges, _texts, autotexts = ax.pie(
         values,
         labels=labels,
         colors=colors,
@@ -402,7 +405,7 @@ def create_pie_chart(stats: dict[str, int]) -> np.ndarray:
 
 
 def create_bar_chart(stats: dict[str, int]) -> np.ndarray:
-    """生成各类别数量柱状图。
+    """生成各类别数量柱状图。.
 
     Args:
         stats: {"coal": N, "gangue": M}。
@@ -455,7 +458,7 @@ log_lock = threading.Lock()
 
 
 def add_log(message: str) -> None:
-    """线程安全地向系统日志追加一条记录。"""
+    """线程安全地向系统日志追加一条记录。."""
     ts = datetime.now().strftime("%H:%M:%S")
     with log_lock:
         system_logs.append(f"[{ts}] {message}")
@@ -464,7 +467,7 @@ def add_log(message: str) -> None:
 
 
 def get_logs() -> str:
-    """获取系统日志字符串。"""
+    """获取系统日志字符串。."""
     with log_lock:
         return "\n".join(system_logs[-50:])
 
@@ -473,7 +476,7 @@ def get_logs() -> str:
 # 回调处理函数
 # ============================================================================
 def ensure_rgb_uint8(image: np.ndarray) -> np.ndarray:
-    """将 Gradio 输入图片规范成 RGB uint8 三通道，便于后续统一推理。"""
+    """将 Gradio 输入图片规范成 RGB uint8 三通道，便于后续统一推理。."""
     if len(image.shape) == 2:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
     elif image.shape[2] == 4:
@@ -492,7 +495,7 @@ def ensure_rgb_uint8(image: np.ndarray) -> np.ndarray:
 
 
 def format_detection_summary(stats: dict[str, int], title: str = "检测结果") -> str:
-    """生成煤块/矿石检测结果 Markdown 表格。"""
+    """生成煤块/矿石检测结果 Markdown 表格。."""
     coal_cnt = stats.get("coal", 0)
     gangue_cnt = stats.get("gangue", 0)
     return (
@@ -505,7 +508,7 @@ def format_detection_summary(stats: dict[str, int], title: str = "检测结果")
 
 
 def normalize_stats_source(source: dict | list | None) -> dict[str, int]:
-    """把检测详情列表或统计字典统一转换成 {"coal": N, "gangue": M}。"""
+    """把检测详情列表或统计字典统一转换成 {"coal": N, "gangue": M}。."""
     stats = {"coal": 0, "gangue": 0}
     if not source:
         return stats
@@ -531,7 +534,7 @@ def handle_image_detect(
     iou: float,
     enable_voice: bool,
 ) -> tuple:
-    """处理图片上传检测。
+    """处理图片上传检测。.
 
     Returns:
         (annotated_img, result_text, detections_json, stats)
@@ -612,7 +615,7 @@ def handle_video_detect(
     iou: float,
     progress=gr.Progress(),
 ) -> tuple:
-    """处理视频上传检测，逐帧推理并输出标注视频。
+    """处理视频上传检测，逐帧推理并输出标注视频。.
 
     Returns:
         (output_video_path, result_text, stats)
@@ -822,7 +825,17 @@ def handle_guest_camera_stream(
     try:
         result = detector.try_predict_frame(frame_bgr, conf=conf, iou=iou)
         if result is None:
-            return gr.update(), "推理占用中，已跳过当前帧，请稍候...", [], None, history, history, snapshots, snapshots, stream_state
+            return (
+                gr.update(),
+                "推理占用中，已跳过当前帧，请稍候...",
+                [],
+                None,
+                history,
+                history,
+                snapshots,
+                snapshots,
+                stream_state,
+            )
         annotated_bgr, stats, has_gangue, max_gangue_conf = result
         annotated = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
     except Exception as e:
@@ -906,9 +919,8 @@ def handle_guest_camera_stream_preview(
 ) -> tuple:
     """Lightweight realtime preview for browser webcam.
 
-    Keep the high-frequency stream focused on the annotated frame and text only.
-    Updating JSON, galleries, and session state on every frame can block Gradio's
-    browser renderer and make the right-side image appear frozen.
+    Keep the high-frequency stream focused on the annotated frame and text only. Updating JSON, galleries, and session
+    state on every frame can block Gradio's browser renderer and make the right-side image appear frozen.
     """
     if image is None:
         return None, "等待本机摄像头画面..."
@@ -921,9 +933,7 @@ def handle_guest_camera_stream_preview(
     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     t0 = time.time()
     try:
-        annotated_bgr, stats, has_gangue, max_gangue_conf = detector.predict_frame(
-            frame_bgr, conf=conf, iou=iou
-        )
+        annotated_bgr, stats, _has_gangue, _max_gangue_conf = detector.predict_frame(frame_bgr, conf=conf, iou=iou)
     except Exception as e:
         return gr.update(), f"## 实时检测异常\n\n{e}"
 
@@ -1021,9 +1031,8 @@ _cam_coal_streak: int = 0
 _CAM_CONFIRM_FRAMES: int = 3  # 需连续3帧检出才确认为有效检测
 
 
-def _cam_worker(cam_index: int, conf: float, iou: float,
-                enable_voice: bool) -> None:
-    """后台线程：持续采集传送带画面并执行识别记录。
+def _cam_worker(cam_index: int, conf: float, iou: float, enable_voice: bool) -> None:
+    """后台线程：持续采集传送带画面并执行识别记录。.
 
     流程: OpenCV 持续读帧 → GPU 推理 → 统计煤块/矿石 → 记录日志与截图。
     """
@@ -1157,9 +1166,8 @@ def _cam_worker(cam_index: int, conf: float, iou: float,
     _log.info("摄像头已关闭")
 
 
-def start_camera(cam_index: int, conf: float, iou: float,
-                 enable_voice: bool) -> str:
-    """启动摄像头后台采集线程（采集→识别→记录流水线）。"""
+def start_camera(cam_index: int, conf: float, iou: float, enable_voice: bool) -> str:
+    """启动摄像头后台采集线程（采集→识别→记录流水线）。."""
     global _cam_thread, _cam_latest_frame, _cam_latest_stats, _cam_total_stats, _cam_detection_snapshots
     global _cam_gangue_streak, _cam_coal_streak
     stop_camera()  # 先停旧的
@@ -1184,7 +1192,7 @@ def start_camera(cam_index: int, conf: float, iou: float,
 
 
 def stop_camera() -> str:
-    """停止摄像头后台采集线程。"""
+    """停止摄像头后台采集线程。."""
     global _cam_thread
     if _cam_thread is not None and _cam_thread.is_alive():
         _cam_stop_event.set()
@@ -1197,23 +1205,21 @@ def stop_camera() -> str:
 
 
 def poll_camera() -> tuple[np.ndarray | None, str, list[np.ndarray]]:
-    """Gradio 定时器回调：拉取最新检测帧、统计和检测截图画廊。"""
+    """Gradio 定时器回调：拉取最新检测帧、统计和检测截图画廊。."""
     with _cam_lock:
         snapshots = list(_cam_detection_snapshots)
         return _cam_latest_frame, _cam_latest_stats, snapshots
 
 
 def get_camera_stats() -> dict[str, int]:
-    """读取摄像头本次演示的经过记录统计。"""
+    """读取摄像头本次演示的经过记录统计。."""
     with _cam_lock:
         return dict(_cam_total_stats)
 
 
-
-
 # ---------- 统计刷新 ----------
 def refresh_statistics(stats_source: dict | list | None) -> tuple:
-    """根据检测详情列表刷新统计图表。
+    """根据检测详情列表刷新统计图表。.
 
     Args:
         stats_source: 图片检测详情列表，或摄像头累计统计字典。
@@ -1240,7 +1246,7 @@ def ensure_default_serial() -> str:
 
 
 def handle_belt_control(action: str) -> str:
-    """履带启停控制 —— 通过串口发送 JSON 指令。"""
+    """履带启停控制 —— 通过串口发送 JSON 指令。."""
     connect_msg = ensure_default_serial()
     result = serial_ctrl.send_belt(action)
     msg = f"{connect_msg}；履带{'启动' if action == 'start' else '停止'} -> {result}"
@@ -1249,7 +1255,7 @@ def handle_belt_control(action: str) -> str:
 
 
 def handle_light_control(action: str) -> str:
-    """照明灯控制 —— 通过串口发送 JSON 指令。"""
+    """照明灯控制 —— 通过串口发送 JSON 指令。."""
     connect_msg = ensure_default_serial()
     result = serial_ctrl.send_light(action)
     msg = f"{connect_msg}；照明灯{'开启' if action == 'on' else '关闭'} -> {result}"
@@ -1258,7 +1264,7 @@ def handle_light_control(action: str) -> str:
 
 
 def handle_emergency_stop() -> str:
-    """应急停止：停止履带并关闭照明。"""
+    """应急停止：停止履带并关闭照明。."""
     add_log("!!! 应急停止触发 !!!")
     connect_msg = ensure_default_serial()
     belt_result = serial_ctrl.send_belt("stop")
@@ -1270,7 +1276,7 @@ def handle_emergency_stop() -> str:
 
 
 def handle_voice_test(text: str) -> str:
-    """语音播报测试。"""
+    """语音播报测试。."""
     if not text.strip():
         text = "煤矿履带煤炭与矿石识别系统测试"
     voice_alert.speak(text)
@@ -1280,14 +1286,14 @@ def handle_voice_test(text: str) -> str:
 
 
 def handle_serial_connect(port: str, baudrate: int) -> str:
-    """连接串口。"""
+    """连接串口。."""
     result = serial_ctrl.connect(port, int(baudrate))
     add_log(f"串口 -> {result}")
     return result
 
 
 def handle_serial_disconnect() -> str:
-    """断开串口。"""
+    """断开串口。."""
     result = serial_ctrl.disconnect()
     add_log(f"串口 -> {result}")
     return result
@@ -1295,7 +1301,7 @@ def handle_serial_disconnect() -> str:
 
 # ---------- 音频录制播放 ----------
 def handle_audio_record(audio: tuple | None) -> str:
-    """处理麦克风录音输入。"""
+    """处理麦克风录音输入。."""
     if audio is None:
         return "未录制音频"
     sample_rate, data = audio
@@ -1330,16 +1336,13 @@ CUSTOM_CSS = """
 
 
 GUEST_SERIAL_OFF_HTML = (
-    '<div class="client-status"><span class="status-dot status-off"></span>'
-    "<span>未连接本机 CH340</span></div>"
+    '<div class="client-status"><span class="status-dot status-off"></span><span>未连接本机 CH340</span></div>'
 )
 GUEST_SERIAL_ON_HTML = (
-    '<div class="client-status"><span class="status-dot status-on"></span>'
-    "<span>已连接本机 CH340</span></div>"
+    '<div class="client-status"><span class="status-dot status-on"></span><span>已连接本机 CH340</span></div>'
 )
 GUEST_SERIAL_WARN_HTML = (
-    '<div class="client-status"><span class="status-dot status-warn"></span>'
-    "<span>需要 HTTPS / 浏览器授权</span></div>"
+    '<div class="client-status"><span class="status-dot status-warn"></span><span>需要 HTTPS / 浏览器授权</span></div>'
 )
 
 
@@ -1552,7 +1555,7 @@ GUEST_BROWSER_ENV_JS = """
 
 
 def build_app() -> gr.Blocks:
-    """构建 Gradio Blocks 应用。
+    """构建 Gradio Blocks 应用。.
 
     Returns:
         配置完成的 gr.Blocks 实例。
@@ -1563,7 +1566,6 @@ def build_app() -> gr.Blocks:
     with gr.Blocks(
         title="煤矿履带煤炭与矿石智能识别监测系统",
     ) as demo:
-
         # ============ 页头 ============
         gr.HTML('<div class="main-title">煤矿履带煤炭与矿石智能识别监测系统</div>')
         gr.HTML(
@@ -1578,12 +1580,11 @@ def build_app() -> gr.Blocks:
         # ============ 全局状态 ============
         detection_state = gr.State(None)  # 存储最近一次图片检测统计
         guest_history_state = gr.State([])
-        guest_snapshot_state = gr.State([])
-        guest_stream_state = gr.State({})
+        gr.State([])
+        gr.State({})
 
         # ============ 主 Tab 布局 ============
         with gr.Tabs():
-
             # ------------------------------------------------------------------
             # Tab 1: 图像检测
             # ------------------------------------------------------------------
@@ -1599,13 +1600,9 @@ def build_app() -> gr.Blocks:
                         )
                         with gr.Row():
                             with gr.Column(scale=1):
-                                image_conf = gr.Slider(
-                                    0.1, 1.0, value=0.25, step=0.05, label="置信度阈值"
-                                )
+                                image_conf = gr.Slider(0.1, 1.0, value=0.25, step=0.05, label="置信度阈值")
                             with gr.Column(scale=1):
-                                image_iou = gr.Slider(
-                                    0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值"
-                                )
+                                image_iou = gr.Slider(0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值")
                         with gr.Row():
                             image_voice = gr.Checkbox(
                                 value=False,
@@ -1663,12 +1660,8 @@ def build_app() -> gr.Blocks:
                         gr.Markdown("### 上传视频文件")
                         video_input = gr.Video(label="选择视频 (MP4/MOV/AVI)")
                         with gr.Row():
-                            video_conf = gr.Slider(
-                                0.1, 1.0, value=0.25, step=0.05, label="置信度阈值"
-                            )
-                            video_iou = gr.Slider(
-                                0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值"
-                            )
+                            video_conf = gr.Slider(0.1, 1.0, value=0.25, step=0.05, label="置信度阈值")
+                            video_iou = gr.Slider(0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值")
                         video_detect_btn = gr.Button("开始检测", variant="primary", size="lg")
                         gr.Markdown("> 处理时间取决于视频长度，请耐心等待。")
 
@@ -1737,13 +1730,9 @@ def build_app() -> gr.Blocks:
                                 ),
                             )
                             with gr.Row():
-                                guest_cam_conf = gr.Slider(
-                                    0.1, 1.0, value=0.25, step=0.05, label="置信度阈值"
-                                )
-                                guest_cam_iou = gr.Slider(
-                                    0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值"
-                            )
-                            guest_cam_voice = gr.Checkbox(value=True, label="启用本机语音报警")
+                                guest_cam_conf = gr.Slider(0.1, 1.0, value=0.25, step=0.05, label="置信度阈值")
+                                guest_cam_iou = gr.Slider(0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值")
+                            gr.Checkbox(value=True, label="启用本机语音报警")
                             guest_env_check = gr.Textbox(
                                 label="浏览器环境自检",
                                 interactive=False,
@@ -1759,8 +1748,8 @@ def build_app() -> gr.Blocks:
                         with gr.Column(scale=3):
                             guest_cam_output = gr.Image(label="检测结果", type="numpy")
                             guest_cam_result = gr.Markdown("等待检测...")
-                            guest_cam_details = gr.JSON(label="检测详情")
-                            guest_cam_gallery = gr.Gallery(
+                            gr.JSON(label="检测详情")
+                            gr.Gallery(
                                 label="本浏览器最近矿石截图",
                                 columns=4,
                                 rows=2,
@@ -1961,21 +1950,17 @@ def build_app() -> gr.Blocks:
                         with gr.Column(scale=1):
                             gr.Markdown("#### 参数设置")
                             cam_index_input = gr.Number(
-                                value=0, label="摄像头序号 (0=默认)", precision=0,
+                                value=0,
+                                label="摄像头序号 (0=默认)",
+                                precision=0,
                             )
-                            cam_conf = gr.Slider(
-                                0.1, 1.0, value=0.5, step=0.05, label="置信度阈值"
-                            )
-                            cam_iou = gr.Slider(
-                                0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值"
-                            )
+                            cam_conf = gr.Slider(0.1, 1.0, value=0.5, step=0.05, label="置信度阈值")
+                            cam_iou = gr.Slider(0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值")
                             cam_voice = gr.Checkbox(value=True, label="语音播报")
                             with gr.Row():
                                 cam_start_btn = gr.Button("启动检测", variant="primary")
                                 cam_stop_btn = gr.Button("停止检测", variant="stop")
-                            cam_status = gr.Textbox(
-                                label="运行状态", interactive=False, value="未启动"
-                            )
+                            cam_status = gr.Textbox(label="运行状态", interactive=False, value="未启动")
                             cam_stats_text = gr.Textbox(
                                 label="实时统计（煤块/矿石/推理）",
                                 interactive=False,
@@ -1984,12 +1969,15 @@ def build_app() -> gr.Blocks:
 
                         with gr.Column(scale=3):
                             cam_output = gr.Image(
-                                label="传送带实时检测画面", type="numpy",
+                                label="传送带实时检测画面",
+                                type="numpy",
                             )
                             cam_gallery = gr.Gallery(
                                 label="最近检测截图（矿石检出时自动保存）",
-                                columns=4, rows=2,
-                                object_fit="contain", height="300px",
+                                columns=4,
+                                rows=2,
+                                object_fit="contain",
+                                height="300px",
                                 show_label=True,
                             )
 
@@ -2058,15 +2046,19 @@ def build_app() -> gr.Blocks:
                     with gr.Accordion("串口连接管理", open=True):
                         with gr.Row():
                             serial_port = gr.Textbox(
-                                value="COM3", label="串口号 (如 COM3)",
+                                value="COM3",
+                                label="串口号 (如 COM3)",
                             )
                             serial_baud = gr.Number(
-                                value=115200, label="波特率", precision=0,
+                                value=115200,
+                                label="波特率",
+                                precision=0,
                             )
                             serial_connect_btn = gr.Button("连接串口", variant="primary")
                             serial_disconnect_btn = gr.Button("断开串口", variant="stop")
                         serial_status = gr.Textbox(
-                            label="串口状态", interactive=False,
+                            label="串口状态",
+                            interactive=False,
                             value="未连接（模拟模式）",
                         )
                         serial_connect_btn.click(
@@ -2161,7 +2153,7 @@ def build_app() -> gr.Blocks:
                     )
                     log_refresh_btn = gr.Button("刷新日志", variant="secondary")
                     log_refresh_btn.click(fn=get_logs, outputs=[log_output])
-                    
+
                     # 日志自动定时刷新（每0.5秒）
                     log_timer = gr.Timer(value=0.5, active=True)
                     log_timer.tick(fn=get_logs, outputs=[log_output])
@@ -2307,7 +2299,7 @@ def start_frpc_tunnel(project_root: Path, local_port: int) -> subprocess.Popen |
 # 入口
 # ============================================================================
 def main() -> None:
-    """应用入口：初始化检测引擎、构建界面、启动服务。"""
+    """应用入口：初始化检测引擎、构建界面、启动服务。."""
     global detector, loaded_model_name, loaded_model_path, loaded_model_classes
 
     print("=" * 60)
@@ -2318,9 +2310,13 @@ def main() -> None:
     default_model_path = project_root / "runs" / "train" / "YOLO-GDL" / "weights" / "best.pt"
 
     # 模型路径优先级：命令行参数 > COAL_MODEL_PATH 环境变量 > YOLO-GDL 最终权重 > yolov8n.pt
-    model_path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
-        "COAL_MODEL_PATH",
-        str(default_model_path),
+    model_path = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else os.environ.get(
+            "COAL_MODEL_PATH",
+            str(default_model_path),
+        )
     )
 
     if not os.path.exists(model_path):
