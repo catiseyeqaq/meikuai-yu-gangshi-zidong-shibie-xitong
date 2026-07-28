@@ -10,7 +10,6 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-
 BASE = Path(r"D:\ultralytics-yolov8")
 MODEL_WEIGHT = r"D:\ultralytics-yolov8\runs\train\YOLO-GDL\weights\best.pt"
 
@@ -103,7 +102,10 @@ TABLES = {
         "关键文件与作用",
         ["文件/目录", "当前作用"],
         [
-            [r"ultralytics\cfg\models\v8\yolov8n-ghostneck-dwdown.yaml", "YOLO-GDL 最终模型结构配置：C3Ghost + DWConv Neck 下采样"],
+            [
+                r"ultralytics\cfg\models\v8\yolov8n-ghostneck-dwdown.yaml",
+                "YOLO-GDL 最终模型结构配置：C3Ghost + DWConv Neck 下采样",
+            ],
             [r"runs\train\YOLO-GDL\weights\best.pt", "当前最终改进模型权重"],
             [r"煤块和石块\data.yaml", "coal/gangue 两分类数据集配置"],
             ["coal_gangue_app.py", "Gradio 上位机应用，支持图片、视频、摄像头、语音、日志和串口控制"],
@@ -216,7 +218,9 @@ def main() -> None:
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     font_run(
-        p.add_run("更新依据：项目文件遍历、runs 训练结果、YOLO-GDL 论文实验章节、Qoder 框架文档 | 更新日期：2026-05-05"),
+        p.add_run(
+            "更新依据：项目文件遍历、runs 训练结果、YOLO-GDL 论文实验章节、Qoder 框架文档 | 更新日期：2026-05-05"
+        ),
         9,
         False,
         (100, 100, 100),

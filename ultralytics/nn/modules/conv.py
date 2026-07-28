@@ -7,10 +7,11 @@ import math
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 __all__ = (
     "CBAM",
+    "EMA",
     "ChannelAttention",
     "Concat",
     "Conv",
@@ -18,7 +19,6 @@ __all__ = (
     "ConvTranspose",
     "DWConv",
     "DWConvTranspose2d",
-    "EMA",
     "Focus",
     "GhostConv",
     "Index",
