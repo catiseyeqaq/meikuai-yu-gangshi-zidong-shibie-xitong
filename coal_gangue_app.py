@@ -591,6 +591,9 @@ def handle_guest_image_detect(
 
     result_text = format_detection_summary(stats)
     history = list(history or [])
+    gangue_cnt = int(stats.get("gangue", 0))
+    if gangue_cnt > 0:
+        voice_alert.speak(f"检测到{gangue_cnt}个矿石")
     if stats:
         history.insert(
             0,
@@ -610,6 +613,7 @@ def handle_video_detect(
     video_path: str | None,
     conf: float,
     iou: float,
+    enable_voice: bool = True,
     progress=gr.Progress(),
 ) -> tuple:
     """处理视频上传检测，逐帧推理并输出标注视频。
@@ -682,6 +686,8 @@ def handle_video_detect(
     )
 
     add_log(f"视频检测完成: {processed_frames}帧, 煤块={total_coal}, 矿石={total_gangue}")
+    if enable_voice and total_gangue > 0:
+        voice_alert.speak(f"视频检测完成，共检测到{total_gangue}个矿石")
     return out_path, result_text, {"coal": total_coal, "gangue": total_gangue}
 
 
@@ -771,6 +777,8 @@ def handle_guest_video_detect(
         },
     )
     history = history[:30]
+    if total_gangue > 0:
+        voice_alert.speak(f"视频检测完成，共检测到{total_gangue}个矿石")
     return out_path, result_text, stats, history, history
 
 
@@ -911,11 +919,11 @@ def handle_guest_camera_stream_preview(
     browser renderer and make the right-side image appear frozen.
     """
     if image is None:
-        return None, "等待本机摄像头画面..."
+        return None, "等待本机摄像头画面...", 0
 
     global detector
     if detector is None:
-        return image, "模型未加载。"
+        return image, "模型未加载。", 0
 
     frame = ensure_rgb_uint8(image)
     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -925,12 +933,19 @@ def handle_guest_camera_stream_preview(
             frame_bgr, conf=conf, iou=iou
         )
     except Exception as e:
-        return gr.update(), f"## 实时检测异常\n\n{e}"
+        return gr.update(), f"## 实时检测异常\n\n{e}", 0
 
     annotated = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
     infer_ms = (time.time() - t0) * 1000
     coal_count = int(stats.get("coal", 0))
     gangue_count = int(stats.get("gangue", 0))
+
+    if gangue_count > 0:
+        global _guest_stream_last_alert_time
+        now = time.time()
+        if now - _guest_stream_last_alert_time > 3.0:
+            _guest_stream_last_alert_time = now
+            voice_alert.speak(f"检测到{gangue_count}个矿石")
 
     result_text = (
         "## 实时检测结果\n\n"
@@ -939,7 +954,7 @@ def handle_guest_camera_stream_preview(
         f"| 矿石 (Gangue) | {gangue_count} |\n"
         f"| **推理耗时** | **{infer_ms:.0f} ms** |"
     )
-    return annotated, result_text
+    return annotated, result_text, gangue_count
 
 
 def refresh_guest_statistics(history: list | None) -> tuple:
@@ -1009,6 +1024,7 @@ _cam_latest_stats: str = "等待摄像头启动..."
 
 # 语音告警冷却
 _last_gangue_alert_time: float = 0.0
+_guest_stream_last_alert_time: float = 0.0
 # FPS
 _cam_fps: float = 0.0
 # 当前摄像头演示累计统计
@@ -1343,17 +1359,30 @@ GUEST_SERIAL_WARN_HTML = (
 )
 
 
-PUBLIC_GUEST_ALARM_JS = """
-(stats, enabled) => {
-  if (!enabled || !stats) {
-    return;
-  }
+GUEST_ALARM_JS = """
+(stats) => {
+  if (!stats) return;
   const gangue = Number(stats.gangue || 0);
-  if (gangue <= 0 || !("speechSynthesis" in window)) {
-    return;
-  }
+  if (gangue <= 0 || !("speechSynthesis" in window)) return;
   window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(`检测到${gangue}个矿石`);
+  const utter = new SpeechSynthesisUtterance("检测到" + gangue + "个矿石");
+  utter.lang = "zh-CN";
+  utter.rate = 1.0;
+  utter.volume = 1.0;
+  window.speechSynthesis.speak(utter);
+}
+"""
+
+GUEST_STREAM_ALARM_JS = """
+(gangueCount) => {
+  const gangue = Number(gangueCount || 0);
+  if (gangue <= 0 || !("speechSynthesis" in window)) return;
+  const now = Date.now();
+  if (!window._yoloGdlLastGangueAlert) window._yoloGdlLastGangueAlert = 0;
+  if (now - window._yoloGdlLastGangueAlert < 3000) return;
+  window._yoloGdlLastGangueAlert = now;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance("检测到" + gangue + "个矿石");
   utter.lang = "zh-CN";
   utter.rate = 1.0;
   utter.volume = 1.0;
@@ -1608,7 +1637,7 @@ def build_app() -> gr.Blocks:
                                 )
                         with gr.Row():
                             image_voice = gr.Checkbox(
-                                value=False,
+                                value=True,
                                 label="启用语音播报",
                                 visible=True,
                             )
@@ -1640,6 +1669,10 @@ def build_app() -> gr.Blocks:
                             guest_history_state,
                             guest_history_json,
                         ],
+                    ).success(
+                        fn=None,
+                        inputs=[detection_state],
+                        js=GUEST_ALARM_JS,
                     )
                 else:
                     image_detect_btn.click(
@@ -1670,6 +1703,7 @@ def build_app() -> gr.Blocks:
                                 0.1, 1.0, value=0.45, step=0.05, label="IoU 阈值"
                             )
                         video_detect_btn = gr.Button("开始检测", variant="primary", size="lg")
+                        video_voice = gr.Checkbox(value=True, label="启用语音播报")
                         gr.Markdown("> 处理时间取决于视频长度，请耐心等待。")
 
                     with gr.Column(scale=2):
@@ -1678,10 +1712,11 @@ def build_app() -> gr.Blocks:
                         video_result_text = gr.Markdown("等待检测...")
 
                 if PUBLIC_GUEST_MODE:
-                    video_detect_btn.click(
+                    video_disable = video_detect_btn.click(
                         fn=lambda: gr.update(interactive=False),
                         outputs=[video_detect_btn],
-                    ).then(
+                    )
+                    video_detect = video_disable.then(
                         fn=handle_guest_video_detect,
                         inputs=[video_input, video_conf, video_iou, guest_history_state],
                         outputs=[
@@ -1691,7 +1726,13 @@ def build_app() -> gr.Blocks:
                             guest_history_state,
                             guest_history_json,
                         ],
-                    ).then(
+                    )
+                    video_detect.success(
+                        fn=None,
+                        inputs=[detection_state],
+                        js=GUEST_ALARM_JS,
+                    )
+                    video_detect.then(
                         fn=lambda: gr.update(interactive=True),
                         outputs=[video_detect_btn],
                     )
@@ -1701,7 +1742,7 @@ def build_app() -> gr.Blocks:
                         outputs=[video_detect_btn],
                     ).then(
                         fn=handle_video_detect,
-                        inputs=[video_input, video_conf, video_iou],
+                        inputs=[video_input, video_conf, video_iou, video_voice],
                         outputs=[video_output, video_result_text, detection_state],
                     ).then(
                         fn=lambda: gr.update(interactive=True),
@@ -1770,7 +1811,8 @@ def build_app() -> gr.Blocks:
                             )
 
                     guest_cam_timer = gr.Timer(value=0.5, active=True)
-                    guest_cam_timer.tick(
+                    guest_cam_gangue_state = gr.State(0)
+                    guest_cam_tick = guest_cam_timer.tick(
                         fn=handle_guest_camera_stream_preview,
                         inputs=[
                             guest_cam_input,
@@ -1780,11 +1822,17 @@ def build_app() -> gr.Blocks:
                         outputs=[
                             guest_cam_output,
                             guest_cam_result,
+                            guest_cam_gangue_state,
                         ],
                         queue=False,
                         trigger_mode="always_last",
                         concurrency_limit=1,
                         concurrency_id="guest_webcam_stream",
+                    )
+                    guest_cam_tick.success(
+                        fn=None,
+                        inputs=[guest_cam_gangue_state],
+                        js=GUEST_STREAM_ALARM_JS,
                     )
 
                 # ------------------------------------------------------------------
