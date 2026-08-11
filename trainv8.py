@@ -1,7 +1,7 @@
 """
-煤矿履带杂质智能识别 - YOLO26n 训练脚本
+煤矿履带杂质智能识别 - YOLOv8n 基线训练脚本
 数据集: 煤块和石块 (120张, 96/24 train/val)
-模型: yolo26n.pt (预训练权重)
+模型: yolov8n.yaml (仓库根目录基线模型配置)
 """
 import os
 import multiprocessing

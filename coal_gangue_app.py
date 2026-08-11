@@ -1591,6 +1591,8 @@ def build_app() -> gr.Blocks:
 
     with gr.Blocks(
         title="煤矿履带煤炭与矿石智能识别监测系统",
+        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"),
+        css=CUSTOM_CSS,
     ) as demo:
 
         # ============ 页头 ============
@@ -2416,6 +2418,8 @@ def main() -> None:
     for fn in demo.fns.values():
         fn.queue = True
     demo.queue()
+    # theme/css 属于 gr.Blocks 构造参数；Gradio 5.x 的 launch() 不接受这两个参数，
+    # 传入会导致启动时直接报 TypeError。
     demo.launch(
         server_name="0.0.0.0",
         server_port=server_port,
@@ -2423,8 +2427,6 @@ def main() -> None:
         show_error=True,
         inbrowser=True,
         quiet=False,
-        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"),
-        css=CUSTOM_CSS,
     )
 
 

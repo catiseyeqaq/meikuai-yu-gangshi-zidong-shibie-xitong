@@ -51,6 +51,23 @@
 
 未连接串口设备时，程序可以进入模拟模式，仅记录指令，不会真正驱动外部设备。
 
+## 技术路线
+
+```
+数据层: Roboflow 私有数据集（煤块/石块标注, 120 张, 96/24 训练/验证）
+    ↓
+模型层: 基线 YOLOv8n (trainv8.py + yolov8n.yaml)
+        改进 YOLO-GDL (train_yolo_gdl.py + yolov8n-ghostneck-dwdown.yaml)
+        GhostNeck + 深度可分离下采样，降低推理开销并保持小目标识别能力
+    ↓
+应用层: Gradio Web 控制台 (coal_gangue_app.py)
+        图片/视频/服务端摄像头/浏览器摄像头四路输入
+    ↓
+联动层: 浏览器语音告警 + pyttsx3 服务端播报 + USB-TTL 串口 JSON 控制下位机
+```
+
+关键工程措施：推理锁防多线程 GPU 冲突、摄像头非阻塞跳帧、连续 N 帧确认防单帧幻觉、会话隔离的访客模式、端口自动顺延与 frp 公网映射。
+
 ## 目录说明
 
 ~~~text

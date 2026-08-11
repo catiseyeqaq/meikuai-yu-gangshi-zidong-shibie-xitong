@@ -1,0 +1,1 @@
+fix: move theme/css from launch() to gr.Blocks() for Gradio 5 compatibility; pin gradio <6.0; fix trainv8 docstring; add tech-route section to README; drop inherited ultralytics CI workflows 
