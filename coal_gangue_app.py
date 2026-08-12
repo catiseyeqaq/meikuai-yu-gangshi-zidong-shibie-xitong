@@ -633,8 +633,6 @@ def handle_guest_image_detect(
 
     result_text = format_detection_summary(stats)
     gangue_cnt = int(stats.get("gangue", 0))
-    if enable_voice and gangue_cnt > 0:
-        voice_alert.speak(f"检测到{gangue_cnt}个矿石")
     history.insert(
         0,
         {
@@ -833,8 +831,6 @@ def handle_guest_video_detect(
         },
     )
     history = history[:30]
-    if enable_voice and total_gangue > 0:
-        voice_alert.speak(f"视频检测完成，共检测到{total_gangue}个矿石")
     return out_path, result_text, stats, history, history
 
 def handle_guest_camera_detect(
