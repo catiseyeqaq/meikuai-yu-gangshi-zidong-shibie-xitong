@@ -108,18 +108,20 @@ python coal_gangue_app.py
 http://127.0.0.1:7860
 ~~~
 
-如果 7860 端口已被占用，程序会自动选择 7860–7899 范围内的可用端口。也可以显式设置：
+如果 7860 端口已被占用，程序会自动选择 7860–7899 范围内的可用端口。也可以显式设置。模型输入尺寸默认为 1280，串口默认为 COM3 / 115200，都可以通过环境变量调整：
 
 ~~~powershell
 $env:GRADIO_SERVER_PORT = "7861"
+$env:COAL_IMAGE_SIZE = "1280"
+$env:COAL_SERIAL_PORT = "COM3"
+$env:COAL_SERIAL_BAUDRATE = "115200"
 python coal_gangue_app.py "D:\models\coal-gangue-best.pt"
 ~~~
 
-### 可选远程访问配置
-
-只有在已经准备好 FRP 服务端、网络策略和访问控制时，才配置以下变量：
+公网 FRP 默认关闭。只有在明确需要远程访问、并准备好 FRP 服务端和访问控制时，才设置 COAL_ENABLE_FRP=1：
 
 ~~~powershell
+$env:COAL_ENABLE_FRP = "1"
 $env:COAL_FRP_SERVER = "your.server.example"
 $env:COAL_FRP_TOKEN = "replace-with-a-secret"
 python coal_gangue_app.py "D:\models\coal-gangue-best.pt"
