@@ -72,6 +72,33 @@ except ImportError:
 
 import json as _json
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable with a predictable fallback."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _env_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    """Read a bounded integer environment variable without crashing startup."""
+    raw = os.environ.get(name)
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        _log.warning("环境变量 %s=%r 不是有效整数，使用默认值 %s", name, raw, default)
+        value = default
+    if minimum is not None:
+        value = max(value, minimum)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
+DEFAULT_SERIAL_PORT = os.environ.get("COAL_SERIAL_PORT", "COM3").strip() or "COM3"
+DEFAULT_SERIAL_BAUDRATE = _env_int("COAL_SERIAL_BAUDRATE", 115200, 1200, 4_000_000)
+
 # ============================================================================
 # 语音播报模块（可选依赖）
 # ============================================================================
@@ -101,7 +128,7 @@ class SerialController:
         self.connected = False
         self.port = ""
 
-    def connect(self, port: str = "COM3", baudrate: int = 115200) -> str:
+    def connect(self, port: str = DEFAULT_SERIAL_PORT, baudrate: int = DEFAULT_SERIAL_BAUDRATE) -> str:
         """连接串口。"""
         if not SERIAL_AVAILABLE:
             self.connected = False
@@ -129,18 +156,21 @@ class SerialController:
         return "串口已断开"
 
     def send_cmd(self, cmd_dict: dict) -> str:
-        """发送 JSON 指令到下位机。"""
+        """发送 JSON 指令到下位机；串口断开时退回可观测的模拟模式。"""
         json_str = _json.dumps(cmd_dict, ensure_ascii=False)
         with self._lock:
-            if self._ser and self._ser.is_open:
-                self._ser.write((json_str + "\n").encode("utf-8"))
-                print(f"[串口TX] {json_str}")
-                return f"[已发送] {json_str}"
-            else:
+            if not (self._ser and self._ser.is_open):
                 print(f"[模拟TX] {json_str}")
                 return f"[模拟] {json_str}"
-
-    def ensure_connected(self, port: str = "COM3", baudrate: int = 115200) -> str:
+            try:
+                self._ser.write((json_str + "\n").encode("utf-8"))
+            except (OSError, IOError, _pyserial.SerialException) as exc:
+                self.connected = False
+                _log.warning("串口发送失败，已切换到模拟模式: %s", exc)
+                return f"[串口异常，未发送] {exc}"
+            print(f"[串口TX] {json_str}")
+            return f"[已发送] {json_str}"
+    def ensure_connected(self, port: str = DEFAULT_SERIAL_PORT, baudrate: int = DEFAULT_SERIAL_BAUDRATE) -> str:
         """Connect to CH340 if needed before sending hardware commands."""
         with self._lock:
             is_open = bool(self._ser and self._ser.is_open)
@@ -223,7 +253,7 @@ class CoalGangueDetector:
         self.model.to(self.device)
         
         # ── 动态读取模型类别映射 ──
-        self.class_names = self.model.names  # {0: 'coal', 1: 'gangue'} 或反过来
+        self.class_names = self._normalize_names(self.model.names)
         print(f"[INFO] 模型类别: {self.class_names}")
         _log.info(f"模型类别: {self.class_names}")
         
@@ -233,9 +263,18 @@ class CoalGangueDetector:
         print(f"[INFO] 模型预热完成（{imgsz}x{imgsz}）")
         _log.info(f"模型预热完成（{imgsz}x{imgsz}）")
 
+    @staticmethod
+    def _normalize_names(names) -> dict[int, str]:
+        """Normalize model names from either a dict or a list into one format."""
+        if isinstance(names, dict):
+            return {int(key): str(value) for key, value in names.items()}
+        if isinstance(names, (list, tuple)):
+            return {index: str(value) for index, value in enumerate(names)}
+        return {}
+
     def _normalize_class(self, cls_id: int) -> tuple[str, str]:
         """将模型原始类别统一映射为系统展示用的煤块/矿石。"""
-        raw_name = str(self.class_names.get(cls_id, f"class_{cls_id}")).lower()
+        raw_name = self.class_names.get(cls_id, f"class_{cls_id}").lower()
         if "coal" in raw_name or "煤" in raw_name:
             return "coal", "煤块"
         return "gangue", "矿石"
@@ -444,10 +483,10 @@ def create_bar_chart(stats: dict[str, int]) -> np.ndarray:
 voice_alert = VoiceAlert()
 serial_ctrl = SerialController()
 detector: CoalGangueDetector | None = None
-loaded_model_name = "YOLO-GDL"
+loaded_model_name = "煤矸石识别模型"
 loaded_model_path = ""
 loaded_model_classes = ""
-PUBLIC_GUEST_MODE = os.environ.get("PUBLIC_GUEST_MODE", "1").strip().lower() not in {"0", "false", "no", "off"}
+PUBLIC_GUEST_MODE = _env_bool("PUBLIC_GUEST_MODE", True)
 
 # 全局日志缓冲区（用于跨 Tab 共享日志）
 system_logs: list[str] = []
@@ -572,14 +611,16 @@ def handle_guest_image_detect(
     conf: float,
     iou: float,
     history: list | None,
+    enable_voice: bool = True,
 ) -> tuple:
-    """Per-browser image/camera detection. No shared logs, voice, or server camera."""
+    """Per-browser image/camera detection with session-local history and optional voice."""
+    history = list(history or [])
     if image is None:
-        return None, "请先上传图片或拍摄一张照片。", [], None, list(history or []), list(history or [])
+        return None, "请先上传图片或拍摄一张照片。", [], None, history, history
 
     global detector
     if detector is None:
-        return image, "模型未加载。", [], None, list(history or []), list(history or [])
+        return image, "模型未加载。", [], None, history, history
 
     image = ensure_rgb_uint8(image)
     image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -587,24 +628,24 @@ def handle_guest_image_detect(
         annotated, stats, detections = detector.predict_image(image_bgr, conf=conf, iou=iou)
         annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
     except Exception as e:
-        return image, f"## 检测异常\n\n{e}", [], None, list(history or []), list(history or [])
+        add_log(f"访客图片检测异常: {e}")
+        return image, f"## 检测异常\n\n{e}", [], None, history, history
 
     result_text = format_detection_summary(stats)
-    history = list(history or [])
     gangue_cnt = int(stats.get("gangue", 0))
-    if gangue_cnt > 0:
+    if enable_voice and gangue_cnt > 0:
         voice_alert.speak(f"检测到{gangue_cnt}个矿石")
-    if stats:
-        history.insert(
-            0,
-            {
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "coal": int(stats.get("coal", 0)),
-                "gangue": int(stats.get("gangue", 0)),
-                "total": int(stats.get("coal", 0)) + int(stats.get("gangue", 0)),
-            },
-        )
-        history = history[:30]
+    history.insert(
+        0,
+        {
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "coal": int(stats.get("coal", 0)),
+            "gangue": gangue_cnt,
+            "total": int(stats.get("coal", 0)) + gangue_cnt,
+        },
+    )
+    history = history[:30]
+    add_log(f"访客图片检测: 煤块={stats.get('coal', 0)}, 矿石={gangue_cnt}")
     return annotated, result_text, detections, stats, history, history
 
 
@@ -616,11 +657,7 @@ def handle_video_detect(
     enable_voice: bool = True,
     progress=gr.Progress(),
 ) -> tuple:
-    """处理视频上传检测，逐帧推理并输出标注视频。
-
-    Returns:
-        (output_video_path, result_text, stats)
-    """
+    """处理视频上传检测，逐帧推理并输出标注视频。"""
     if video_path is None:
         return None, "请先上传视频。", None
 
@@ -632,48 +669,58 @@ def handle_video_detect(
     if not cap.isOpened():
         return None, "无法打开视频文件。", None
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 25.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # 输出临时文件
-    suffix = os.path.splitext(video_path)[1] or ".mp4"
-    out_fd, out_path = tempfile.mkstemp(suffix=suffix)
-    os.close(out_fd)
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-
+    out_path = None
+    out_writer = None
     total_coal = 0
     total_gangue = 0
     processed_frames = 0
+    try:
+        total_frames = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 0)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = fps if fps > 0 else 25.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            return None, "无法读取视频尺寸。", None
 
-    for frame_idx in range(total_frames):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        processed_frames += 1
+        out_fd, out_path = tempfile.mkstemp(suffix=".mp4")
+        os.close(out_fd)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+        if not out_writer.isOpened():
+            raise RuntimeError("无法创建视频输出编码器，请检查 OpenCV/MP4 编码支持。")
 
-        try:
-            annotated, stats, _, _ = detector.predict_frame(frame, conf=conf, iou=iou)
-        except Exception as e:
-            annotated = frame
-            stats = {"coal": 0, "gangue": 0}
-            add_log(f"视频帧推理异常: {e}")
-        out_writer.write(annotated)
-
-        total_coal += stats.get("coal", 0)
-        total_gangue += stats.get("gangue", 0)
-
-        progress((frame_idx + 1) / total_frames, desc=f"处理中... {frame_idx + 1}/{total_frames}")
-
-    cap.release()
-    out_writer.release()
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            try:
+                annotated, stats, _, _ = detector.predict_frame(frame, conf=conf, iou=iou)
+            except Exception as e:
+                annotated = frame
+                stats = {"coal": 0, "gangue": 0}
+                add_log(f"视频帧推理异常: {e}")
+            out_writer.write(annotated)
+            total_coal += int(stats.get("coal", 0))
+            total_gangue += int(stats.get("gangue", 0))
+            denominator = max(total_frames, frame_idx)
+            progress(min(frame_idx / denominator, 1.0), desc=f"处理中... {frame_idx}/{total_frames or '?'}")
+            processed_frames = frame_idx
+    except Exception as e:
+        add_log(f"视频检测异常: {e}")
+        if out_path:
+            Path(out_path).unlink(missing_ok=True)
+        return None, f"## 视频检测异常\n\n{e}", None
+    finally:
+        cap.release()
+        if out_writer is not None:
+            out_writer.release()
 
     if processed_frames == 0:
+        if out_path:
+            Path(out_path).unlink(missing_ok=True)
         return None, "视频无有效帧。", None
 
     result_text = (
@@ -684,7 +731,6 @@ def handle_video_detect(
         f"| 累计矿石检出 | {total_gangue} |\n"
         f"| 帧率 (FPS) | {fps:.1f} |"
     )
-
     add_log(f"视频检测完成: {processed_frames}帧, 煤块={total_coal}, 矿石={total_gangue}")
     if enable_voice and total_gangue > 0:
         voice_alert.speak(f"视频检测完成，共检测到{total_gangue}个矿石")
@@ -696,63 +742,74 @@ def handle_guest_video_detect(
     conf: float,
     iou: float,
     history: list | None,
+    enable_voice: bool = True,
     progress=gr.Progress(),
 ) -> tuple:
-    """Per-browser video detection. History stays in the current Gradio session."""
+    """Per-browser video detection with session-local history and optional voice."""
+    history = list(history or [])
     if video_path is None:
-        history = list(history or [])
         return None, "请先上传视频。", None, history, history
 
     global detector
     if detector is None:
-        history = list(history or [])
         return None, "模型未加载。", None, history, history
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        history = list(history or [])
         return None, "无法打开视频文件。", None, history, history
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 25.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    suffix = os.path.splitext(video_path)[1] or ".mp4"
-    out_fd, out_path = tempfile.mkstemp(suffix=suffix)
-    os.close(out_fd)
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-
+    out_path = None
+    out_writer = None
     total_coal = 0
     total_gangue = 0
     processed_frames = 0
+    try:
+        total_frames = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 0)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = fps if fps > 0 else 25.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            return None, "无法读取视频尺寸。", None, history, history
 
-    for frame_idx in range(total_frames):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        processed_frames += 1
+        out_fd, out_path = tempfile.mkstemp(suffix=".mp4")
+        os.close(out_fd)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+        if not out_writer.isOpened():
+            raise RuntimeError("无法创建视频输出编码器，请检查 OpenCV/MP4 编码支持。")
 
-        try:
-            annotated, stats, _, _ = detector.predict_frame(frame, conf=conf, iou=iou)
-        except Exception:
-            annotated = frame
-            stats = {"coal": 0, "gangue": 0}
-        out_writer.write(annotated)
-
-        total_coal += stats.get("coal", 0)
-        total_gangue += stats.get("gangue", 0)
-        progress((frame_idx + 1) / total_frames, desc=f"处理中... {frame_idx + 1}/{total_frames}")
-
-    cap.release()
-    out_writer.release()
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            try:
+                annotated, stats, _, _ = detector.predict_frame(frame, conf=conf, iou=iou)
+            except Exception as e:
+                annotated = frame
+                stats = {"coal": 0, "gangue": 0}
+                add_log(f"访客视频帧推理异常: {e}")
+            out_writer.write(annotated)
+            total_coal += int(stats.get("coal", 0))
+            total_gangue += int(stats.get("gangue", 0))
+            denominator = max(total_frames, frame_idx)
+            progress(min(frame_idx / denominator, 1.0), desc=f"处理中... {frame_idx}/{total_frames or '?'}")
+            processed_frames = frame_idx
+    except Exception as e:
+        add_log(f"访客视频检测异常: {e}")
+        if out_path:
+            Path(out_path).unlink(missing_ok=True)
+        return None, f"## 视频检测异常\n\n{e}", None, history, history
+    finally:
+        cap.release()
+        if out_writer is not None:
+            out_writer.release()
 
     if processed_frames == 0:
-        history = list(history or [])
+        if out_path:
+            Path(out_path).unlink(missing_ok=True)
         return None, "视频无有效帧。", None, history, history
 
     stats = {"coal": total_coal, "gangue": total_gangue}
@@ -764,7 +821,6 @@ def handle_guest_video_detect(
         f"| 累计矿石检出 | {total_gangue} |\n"
         f"| 帧率 (FPS) | {fps:.1f} |"
     )
-    history = list(history or [])
     history.insert(
         0,
         {
@@ -777,10 +833,9 @@ def handle_guest_video_detect(
         },
     )
     history = history[:30]
-    if total_gangue > 0:
+    if enable_voice and total_gangue > 0:
         voice_alert.speak(f"视频检测完成，共检测到{total_gangue}个矿石")
     return out_path, result_text, stats, history, history
-
 
 def handle_guest_camera_detect(
     image: np.ndarray | None,
@@ -1360,8 +1415,8 @@ GUEST_SERIAL_WARN_HTML = (
 
 
 GUEST_ALARM_JS = """
-(stats) => {
-  if (!stats) return;
+(stats, enabled) => {
+  if (!enabled || !stats) return;
   const gangue = Number(stats.gangue || 0);
   if (gangue <= 0 || !("speechSynthesis" in window)) return;
   window.speechSynthesis.cancel();
@@ -1374,13 +1429,13 @@ GUEST_ALARM_JS = """
 """
 
 GUEST_STREAM_ALARM_JS = """
-(gangueCount) => {
+(gangueCount, enabled) => {
   const gangue = Number(gangueCount || 0);
-  if (gangue <= 0 || !("speechSynthesis" in window)) return;
+  if (!enabled || gangue <= 0 || !("speechSynthesis" in window)) return;
   const now = Date.now();
-  if (!window._yoloGdlLastGangueAlert) window._yoloGdlLastGangueAlert = 0;
-  if (now - window._yoloGdlLastGangueAlert < 3000) return;
-  window._yoloGdlLastGangueAlert = now;
+  if (!window._coalGangueLastAlert) window._coalGangueLastAlert = 0;
+  if (now - window._coalGangueLastAlert < 3000) return;
+  window._coalGangueLastAlert = now;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance("检测到" + gangue + "个矿石");
   utter.lang = "zh-CN";
@@ -1389,7 +1444,6 @@ GUEST_STREAM_ALARM_JS = """
   window.speechSynthesis.speak(utter);
 }
 """
-
 
 GUEST_SERIAL_CONNECT_JS = f"""
 async () => {{
@@ -1591,8 +1645,6 @@ def build_app() -> gr.Blocks:
 
     with gr.Blocks(
         title="煤矿履带煤炭与矿石智能识别监测系统",
-        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"),
-        css=CUSTOM_CSS,
     ) as demo:
 
         # ============ 页头 ============
@@ -1662,7 +1714,7 @@ def build_app() -> gr.Blocks:
                 if PUBLIC_GUEST_MODE:
                     image_detect_btn.click(
                         fn=handle_guest_image_detect,
-                        inputs=[image_input, image_conf, image_iou, guest_history_state],
+                        inputs=[image_input, image_conf, image_iou, guest_history_state, image_voice],
                         outputs=[
                             image_output,
                             image_result_text,
@@ -1673,7 +1725,7 @@ def build_app() -> gr.Blocks:
                         ],
                     ).success(
                         fn=None,
-                        inputs=[detection_state],
+                        inputs=[detection_state, image_voice],
                         js=GUEST_ALARM_JS,
                     )
                 else:
@@ -1720,7 +1772,7 @@ def build_app() -> gr.Blocks:
                     )
                     video_detect = video_disable.then(
                         fn=handle_guest_video_detect,
-                        inputs=[video_input, video_conf, video_iou, guest_history_state],
+                        inputs=[video_input, video_conf, video_iou, guest_history_state, video_voice],
                         outputs=[
                             video_output,
                             video_result_text,
@@ -1731,7 +1783,7 @@ def build_app() -> gr.Blocks:
                     )
                     video_detect.success(
                         fn=None,
-                        inputs=[detection_state],
+                        inputs=[detection_state, video_voice],
                         js=GUEST_ALARM_JS,
                     )
                     video_detect.then(
@@ -1833,7 +1885,7 @@ def build_app() -> gr.Blocks:
                     )
                     guest_cam_tick.success(
                         fn=None,
-                        inputs=[guest_cam_gangue_state],
+                        inputs=[guest_cam_gangue_state, guest_cam_voice],
                         js=GUEST_STREAM_ALARM_JS,
                     )
 
@@ -2230,9 +2282,9 @@ def build_app() -> gr.Blocks:
 
 def get_available_port(default_port: int = 7860, max_port: int = 7899) -> int:
     """Return the requested Gradio port, or the next free port if it is busy."""
-    env_port = os.environ.get("GRADIO_SERVER_PORT")
+    env_port = _env_int("GRADIO_SERVER_PORT", 0, 0, 65535)
     if env_port:
-        return int(env_port)
+        return env_port
 
     for port in range(default_port, max_port + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -2249,8 +2301,8 @@ def get_available_port(default_port: int = 7860, max_port: int = 7899) -> int:
 def write_frpc_config(frpc_dir: Path, local_port: int) -> Path:
     """Write frpc config that exposes the local Gradio port through Aliyun ECS."""
     config_path = frpc_dir / "frpc.toml"
-    frp_server = os.environ.get("COAL_FRP_SERVER", "YOUR_FRP_SERVER_IP")
-    frp_token = os.environ.get("COAL_FRP_TOKEN", "YOUR_FRP_TOKEN")
+    frp_server = os.environ.get("COAL_FRP_SERVER", "").strip()
+    frp_token = os.environ.get("COAL_FRP_TOKEN", "").strip()
     config_path.write_text(
         "\n".join(
             [
@@ -2306,7 +2358,19 @@ def _stop_own_frpc() -> None:
 
 
 def start_frpc_tunnel(project_root: Path, local_port: int) -> subprocess.Popen | None:
-    """Start frpc in a separate Windows console for public access."""
+    """Start frpc only when explicitly enabled and fully configured."""
+    if not _env_bool("COAL_ENABLE_FRP", False):
+        _log.info("未启用 FRP 隧道，跳过公网转发")
+        return None
+    frp_server = os.environ.get("COAL_FRP_SERVER", "").strip()
+    frp_token = os.environ.get("COAL_FRP_TOKEN", "").strip()
+    if not frp_server or not frp_token:
+        message = "已启用 FRP，但缺少 COAL_FRP_SERVER 或 COAL_FRP_TOKEN，跳过公网转发"
+        print(f"[WARN] {message}")
+        _log.warning(message)
+        add_log(message)
+        return None
+
     frpc_dir = project_root / "frp_windows" / "frp_0.68.1_windows_amd64"
     frpc_exe = frpc_dir / "frpc.exe"
     if not frpc_exe.exists():
@@ -2346,10 +2410,10 @@ def start_frpc_tunnel(project_root: Path, local_port: int) -> subprocess.Popen |
     _get_coal_frpc_pid_file().parent.mkdir(parents=True, exist_ok=True)
     _get_coal_frpc_pid_file().write_text(str(proc.pid))
 
-    print(f"[INFO] 公网访问: http://{os.environ.get('COAL_FRP_SERVER', 'YOUR_FRP_SERVER_IP')}:8080")
+    print(f"[INFO] 公网访问: http://{frp_server}:8080")
     print(f"[INFO] frpc 已启动，本地端口 {local_port} -> 阿里云 8080")
     _log.info(f"frpc 已启动，本地端口 {local_port} -> 阿里云 8080")
-    add_log(f"公网访问: http://{os.environ.get('COAL_FRP_SERVER', 'YOUR_FRP_SERVER_IP')}:8080")
+    add_log(f"公网访问: http://{frp_server}:8080")
     return proc
 
 
@@ -2384,19 +2448,20 @@ def main() -> None:
 
     model_path = str(Path(model_path).resolve())
     loaded_model_path = model_path
-    loaded_model_name = "YOLO-GDL" if "YOLO-GDL" in model_path else Path(model_path).stem
+    loaded_model_name = "煤矸石识别模型" if "YOLO-GDL" in model_path else Path(model_path).stem
 
     print(f"[INFO] 加载模型: {model_path}")
     _log.info(f"加载模型: {model_path}")
-    detector = CoalGangueDetector(model_path)
-    loaded_model_classes = ", ".join(str(v) for v in detector.model.names.values())
-    print(f"[INFO] 模型已加载，类别: {detector.model.names}")
-    _log.info(f"模型已加载，类别: {detector.model.names}")
+    image_size = _env_int("COAL_IMAGE_SIZE", 1280, 320, 4096)
+    detector = CoalGangueDetector(model_path, imgsz=image_size)
+    loaded_model_classes = ", ".join(detector.class_names.values()) or "未提供类别名称"
+    print(f"[INFO] 模型已加载，类别: {detector.class_names}")
+    _log.info(f"模型已加载，类别: {detector.class_names}")
 
     add_log("系统启动")
     _log.info("系统启动完成")
     add_log(f"模型路径: {model_path}")
-    add_log(f"检测类别: {detector.model.names}")
+    add_log(f"检测类别: {detector.class_names}")
 
     voice_alert.speak("煤炭与矿石识别系统已启动")
 
@@ -2418,8 +2483,6 @@ def main() -> None:
     for fn in demo.fns.values():
         fn.queue = True
     demo.queue()
-    # theme/css 属于 gr.Blocks 构造参数；Gradio 5.x 的 launch() 不接受这两个参数，
-    # 传入会导致启动时直接报 TypeError。
     demo.launch(
         server_name="0.0.0.0",
         server_port=server_port,
@@ -2427,6 +2490,8 @@ def main() -> None:
         show_error=True,
         inbrowser=True,
         quiet=False,
+        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"),
+        css=CUSTOM_CSS,
     )
 
 
